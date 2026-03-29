@@ -1,0 +1,5 @@
+{
+  "name": "ClipShare",
+  "description": "A real-time clipboard sharing tool to easily transfer text and links between devices.",
+  "requestFramePermissions": []
+}
