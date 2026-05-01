@@ -5,9 +5,15 @@ import { cn } from './lib/utils';
 import { db } from './firebase';
 import { ref, onValue, push, set, serverTimestamp, off, query, orderByChild, startAt, onDisconnect, remove } from 'firebase/database';
 
+import { Image as ImageIcon, Paperclip, X } from 'lucide-react';
+import { storage } from './firebase';
+import { ref as sRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+
 type Message = {
   id: string;
-  text: string;
+  text?: string;
+  imageUrl?: string;
+  type: 'text' | 'image';
   sender: 'me' | 'other';
   timestamp: number;
 };
@@ -26,6 +32,10 @@ export default function App() {
   const [inRoom, setInRoom] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const myMessageKeys = useRef<Set<string>>(new Set());
@@ -88,7 +98,9 @@ export default function App() {
             loadedMessages.push({
               id: key,
               text: val.content,
-              sender: myMessageKeys.current.has(key) ? 'me' : 'other',
+              imageUrl: val.imageUrl,
+              type: val.type || 'text',
+              sender: val.senderId === SESSION_ID ? 'me' : 'other',
               timestamp: val.timestamp
             });
           }
@@ -144,21 +156,51 @@ export default function App() {
     myMessageKeys.current.clear();
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputText.trim().length > 0) {
-      const messagesRef = ref(db, `rooms/${roomCode}`);
-      const newMsgRef = push(messagesRef);
-      if (newMsgRef.key) {
-        myMessageKeys.current.add(newMsgRef.key);
+    if (inputText.trim().length === 0 && !selectedFile) return;
+
+    let imageUrl = '';
+    if (selectedFile) {
+      setUploading(true);
+      try {
+        const imageRef = sRef(storage, `images/${roomCode}/${Date.now()}_${selectedFile.name}`);
+        const snapshot = await uploadBytes(imageRef, selectedFile);
+        imageUrl = await getDownloadURL(snapshot.ref);
+      } catch (err) {
+        console.error("Erreur d'upload:", err);
       }
-      set(newMsgRef, {
-        content: inputText.trim(),
-        timestamp: serverTimestamp()
-      }).catch(err => {
-        console.error("Erreur d'envoi:", err);
-      });
-      setInputText('');
+      setUploading(false);
+      setSelectedFile(null);
+      setImagePreview(null);
+    }
+
+    const messagesRef = ref(db, `rooms/${roomCode}`);
+    const newMsgRef = push(messagesRef);
+    if (newMsgRef.key) {
+      myMessageKeys.current.add(newMsgRef.key);
+    }
+    set(newMsgRef, {
+      content: inputText.trim(),
+      imageUrl: imageUrl || null,
+      type: imageUrl ? 'image' : 'text',
+      senderId: SESSION_ID,
+      timestamp: serverTimestamp()
+    }).catch(err => {
+      console.error("Erreur d'envoi:", err);
+    });
+    setInputText('');
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -278,64 +320,158 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex-1 bg-white dark:bg-neutral-900/30 border border-neutral-200 dark:border-neutral-800/50 rounded-2xl p-4 mb-6 overflow-y-auto flex flex-col gap-4 shadow-sm">
-                  {messages.length === 0 ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-neutral-400 dark:text-neutral-500 space-y-3">
-                      <div className="w-16 h-16 rounded-full bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center">
-                        <Send className="w-6 h-6 opacity-50" />
+                <div className="flex-1 bg-white dark:bg-neutral-900/30 border border-neutral-200 dark:border-neutral-800/50 rounded-2xl p-4 mb-6 overflow-y-auto flex flex-col gap-4 shadow-sm relative">
+                  <div className="flex-1 flex flex-col gap-4">
+                    {messages.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center text-neutral-400 dark:text-neutral-500 space-y-3">
+                        <div className="w-16 h-16 rounded-full bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center">
+                          <Send className="w-6 h-6 opacity-50" />
+                        </div>
+                        <p>No clips yet. Send something below!</p>
                       </div>
-                      <p>No clips yet. Send something below!</p>
-                    </div>
-                  ) : (
-                    messages.map((msg) => (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        key={msg.id}
-                        className={cn(
-                          "max-w-[85%] rounded-2xl p-4 relative group",
-                          msg.sender === 'me'
-                            ? "bg-indigo-600 text-white self-end rounded-br-sm shadow-sm"
-                            : "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 self-start rounded-bl-sm shadow-sm"
-                        )}
-                      >
-                        <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.text}</p>
-                        <button
-                          onClick={() => copyMessage(msg.text)}
+                    ) : (
+                      messages.map((msg) => (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          key={msg.id}
                           className={cn(
-                            "absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all",
-                            msg.sender === 'me' ? "bg-indigo-700 hover:bg-indigo-800" : "bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600"
+                            "max-w-[85%] rounded-2xl p-4 relative group",
+                            msg.sender === 'me'
+                              ? "bg-indigo-600 text-white self-end rounded-br-sm shadow-sm"
+                              : "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 self-start rounded-bl-sm shadow-sm"
                           )}
                         >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
-                      </motion.div>
-                    ))
-                  )}
+                          {msg.type === 'image' && msg.imageUrl && (
+                            <div className="mb-2 overflow-hidden rounded-xl">
+                              <img 
+                                src={msg.imageUrl} 
+                                alt="Uploaded content" 
+                                className="max-w-full h-auto object-cover hover:scale-105 transition-transform duration-300 cursor-pointer"
+                                onClick={() => window.open(msg.imageUrl, '_blank')}
+                              />
+                            </div>
+                          )}
+                          {msg.text && (
+                            <p className="whitespace-pre-wrap break-words leading-relaxed">
+                              {msg.text.split(/(\s+)/).map((part, i) => {
+                                const urlMatch = part.match(/^(https?:\/\/[^\s]+)$|^(https?:\/\/[^\s]+)([\.,!\?\)])$/);
+                                if (urlMatch) {
+                                  const url = urlMatch[1] || urlMatch[2];
+                                  const punctuation = urlMatch[3] || '';
+                                  return (
+                                    <React.Fragment key={i}>
+                                      <a 
+                                        href={url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className={cn(
+                                          "underline break-all",
+                                          msg.sender === 'me' ? "text-indigo-200" : "text-indigo-600 dark:text-indigo-400"
+                                        )}
+                                      >
+                                        {url}
+                                      </a>
+                                      {punctuation}
+                                    </React.Fragment>
+                                  );
+                                }
+                                return part;
+                              })}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => copyMessage(msg.text || '')}
+                            className={cn(
+                              "absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all",
+                              msg.sender === 'me' ? "bg-indigo-700 hover:bg-indigo-800" : "bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-700 dark:hover:bg-neutral-600"
+                            )}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </motion.div>
+                      ))
+                    )}
+                  </div>
                   <div ref={messagesEndRef} />
                 </div>
 
-                <form onSubmit={handleSendMessage} className="relative">
-                  <textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage(e);
-                      }
-                    }}
-                    placeholder="Type or paste something..."
-                    className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-4 pl-5 pr-16 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all min-h-[60px] max-h-[200px] text-neutral-900 dark:text-white shadow-sm"
-                    rows={1}
-                  />
-                  <button
-                    type="submit"
-                    disabled={inputText.trim().length === 0}
-                    className="absolute right-3 bottom-3 p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Send className="w-5 h-5" />
-                  </button>
+                <form onSubmit={handleSendMessage} className="relative space-y-2">
+                  <AnimatePresence>
+                    {imagePreview && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute bottom-full mb-4 left-0 right-0 p-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-xl flex items-center gap-4"
+                      >
+                        <div className="w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800">
+                          <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-neutral-900 dark:text-white truncate">
+                            {selectedFile?.name}
+                          </p>
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                            Ready to send
+                          </p>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setSelectedFile(null);
+                            setImagePreview(null);
+                          }}
+                          className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
+                        >
+                          <X className="w-5 h-5 text-neutral-500" />
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="relative flex items-end gap-2">
+                    <div className="flex-1 relative">
+                      <textarea
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendMessage(e);
+                          }
+                        }}
+                        placeholder="Type or paste something..."
+                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-4 pl-12 pr-12 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all min-h-[60px] max-h-[200px] text-neutral-900 dark:text-white shadow-sm"
+                        rows={1}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="absolute left-3 bottom-3 p-2 text-neutral-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                      >
+                        <ImageIcon className="w-5 h-5" />
+                      </button>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleFileSelect} 
+                        className="hidden" 
+                        accept="image/*"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={(inputText.trim().length === 0 && !selectedFile) || uploading}
+                      className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 h-[60px] w-[60px] flex items-center justify-center"
+                    >
+                      {uploading ? (
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
                 </form>
               </motion.div>
             )}
