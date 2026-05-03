@@ -7,7 +7,7 @@ import { ref, onValue, push, set, serverTimestamp, off, query, orderByChild, sta
 
 import { Image as ImageIcon, Paperclip, X } from 'lucide-react';
 import { storage } from './firebase';
-import { ref as sRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as sRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 
 type Message = {
   id: string;
@@ -35,6 +35,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -163,16 +164,37 @@ export default function App() {
     let imageUrl = '';
     if (selectedFile) {
       setUploading(true);
+      setUploadProgress(0);
+      
+      const imageRef = sRef(storage, `images/${roomCode}/${Date.now()}_${selectedFile.name}`);
+      const uploadTask = uploadBytesResumable(imageRef, selectedFile);
+
       try {
-        const imageRef = sRef(storage, `images/${roomCode}/${Date.now()}_${selectedFile.name}`);
-        const snapshot = await uploadBytes(imageRef, selectedFile);
-        imageUrl = await getDownloadURL(snapshot.ref);
+        await new Promise((resolve, reject) => {
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadProgress(progress);
+            }, 
+            (error) => {
+              console.error("Erreur d'upload:", error);
+              reject(error);
+            }, 
+            async () => {
+              imageUrl = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve(true);
+            }
+          );
+        });
       } catch (err) {
-        console.error("Erreur d'upload:", err);
+        setUploading(false);
+        return; // Stop if upload failed
       }
+      
       setUploading(false);
       setSelectedFile(null);
       setImagePreview(null);
+      setUploadProgress(0);
     }
 
     const messagesRef = ref(db, `rooms/${roomCode}`);
@@ -466,7 +488,10 @@ export default function App() {
                       className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 h-[60px] w-[60px] flex items-center justify-center"
                     >
                       {uploading ? (
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <div className="relative w-6 h-6 flex items-center justify-center">
+                          <div className="absolute inset-0 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span className="text-[10px] font-bold">{Math.round(uploadProgress)}%</span>
+                        </div>
                       ) : (
                         <Send className="w-5 h-5" />
                       )}
