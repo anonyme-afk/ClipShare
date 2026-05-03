@@ -36,6 +36,7 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -176,19 +177,30 @@ export default function App() {
               const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
               setUploadProgress(progress);
             }, 
-            (error) => {
+            (error: any) => {
               console.error("Erreur d'upload:", error);
+              if (error.code === 'storage/unauthorized') {
+                setErrorMessage("Accès refusé : vérifie tes règles Firebase Storage !");
+              } else {
+                setErrorMessage("Erreur d'envoi : " + error.message);
+              }
               reject(error);
             }, 
             async () => {
-              imageUrl = await getDownloadURL(uploadTask.snapshot.ref);
-              resolve(true);
+              try {
+                imageUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(true);
+              } catch (e: any) {
+                setErrorMessage("Erreur lors de la récupération de l'image.");
+                reject(e);
+              }
             }
           );
         });
       } catch (err) {
         setUploading(false);
-        return; // Stop if upload failed
+        setTimeout(() => setErrorMessage(null), 5000);
+        return; 
       }
       
       setUploading(false);
@@ -339,8 +351,23 @@ export default function App() {
                   >
                     {copiedCode ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                     {copiedCode ? 'Copied!' : 'Copy Code'}
-                  </button>
                 </div>
+                
+                <AnimatePresence>
+                  {errorMessage && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-3 rounded-xl mb-4 text-sm font-medium flex items-center justify-between"
+                    >
+                      <span>{errorMessage}</span>
+                      <button onClick={() => setErrorMessage(null)} className="p-1 hover:bg-red-500/10 rounded-lg">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <div className="flex-1 bg-white dark:bg-neutral-900/30 border border-neutral-200 dark:border-neutral-800/50 rounded-2xl p-4 mb-6 overflow-y-auto flex flex-col gap-4 shadow-sm relative">
                   <div className="flex-1 flex flex-col gap-4">
