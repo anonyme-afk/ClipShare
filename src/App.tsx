@@ -6,8 +6,7 @@ import { db } from './firebase';
 import { ref, onValue, push, set, serverTimestamp, off, query, orderByChild, startAt, onDisconnect, remove } from 'firebase/database';
 
 import { Image as ImageIcon, Paperclip, X } from 'lucide-react';
-import { storage } from './firebase';
-import { ref as sRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+// Storage supprimé car nécessite un forfait payant dans certaines régions
 
 type Message = {
   id: string;
@@ -162,45 +161,60 @@ export default function App() {
     e.preventDefault();
     if (inputText.trim().length === 0 && !selectedFile) return;
 
-    let imageUrl = '';
+    let finalImageUrl = '';
+    
     if (selectedFile) {
       setUploading(true);
-      setUploadProgress(0);
+      setUploadProgress(20); // Début du processus local
       
-      const imageRef = sRef(storage, `images/${roomCode}/${Date.now()}_${selectedFile.name}`);
-      const uploadTask = uploadBytesResumable(imageRef, selectedFile);
-
       try {
-        await new Promise((resolve, reject) => {
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadProgress(progress);
-            }, 
-            (error: any) => {
-              console.error("Erreur d'upload:", error);
-              if (error.code === 'storage/unauthorized') {
-                setErrorMessage("Accès refusé : vérifie tes règles Firebase Storage !");
+        // Fonction de compression locale via Canvas
+        const compressedBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(selectedFile);
+          reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target?.result as string;
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const MAX_WIDTH = 800;
+              const MAX_HEIGHT = 800;
+              let width = img.width;
+              let height = img.height;
+
+              if (width > height) {
+                if (width > MAX_WIDTH) {
+                  height *= MAX_WIDTH / width;
+                  width = MAX_WIDTH;
+                }
               } else {
-                setErrorMessage("Erreur d'envoi : " + error.message);
+                if (height > MAX_HEIGHT) {
+                  width *= MAX_HEIGHT / height;
+                  height = MAX_HEIGHT;
+                }
               }
-              reject(error);
-            }, 
-            async () => {
-              try {
-                imageUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve(true);
-              } catch (e: any) {
-                setErrorMessage("Erreur lors de la récupération de l'image.");
-                reject(e);
-              }
-            }
-          );
+
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx?.drawImage(img, 0, 0, width, height);
+              
+              // Compression à 0.7 de qualité (très léger)
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+              resolve(dataUrl);
+            };
+            img.onerror = reject;
+          };
+          reader.onerror = reject;
         });
+
+        finalImageUrl = compressedBase64;
+        setUploadProgress(100);
       } catch (err) {
+        console.error("Erreur de traitement d'image:", err);
+        setErrorMessage("Erreur lors de la compression de l'image.");
         setUploading(false);
-        setTimeout(() => setErrorMessage(null), 5000);
-        return; 
+        return;
       }
       
       setUploading(false);
@@ -216,12 +230,13 @@ export default function App() {
     }
     set(newMsgRef, {
       content: inputText.trim(),
-      imageUrl: imageUrl || null,
-      type: imageUrl ? 'image' : 'text',
+      imageUrl: finalImageUrl || null,
+      type: finalImageUrl ? 'image' : 'text',
       senderId: SESSION_ID,
       timestamp: serverTimestamp()
     }).catch(err => {
       console.error("Erreur d'envoi:", err);
+      setErrorMessage("Erreur d'envoi à la base de données.");
     });
     setInputText('');
   };
