@@ -351,6 +351,7 @@ export default function App() {
                   >
                     {copiedCode ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                     {copiedCode ? 'Copied!' : 'Copy Code'}
+                  </button>
                 </div>
                 
                 <AnimatePresence>
