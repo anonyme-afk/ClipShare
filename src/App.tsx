@@ -106,6 +106,9 @@ export default function App() {
               id: key,
               text: val.content,
               imageUrl: val.imageUrl,
+              fileName: val.fileName,
+              fileSize: val.fileSize,
+              fileUrl: val.fileUrl,
               type: val.type || 'text',
               sender: val.senderId === SESSION_ID ? 'me' : 'other',
               timestamp: val.timestamp
