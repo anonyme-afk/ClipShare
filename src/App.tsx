@@ -338,8 +338,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-50 font-sans selection:bg-indigo-500/30 transition-colors duration-300">
-      <div className="max-w-3xl mx-auto p-4 md:p-8 h-screen flex flex-col">
+    <div className="min-h-[100dvh] bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-50 font-sans selection:bg-indigo-500/30 transition-colors duration-300">
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 md:p-8 h-[100dvh] flex flex-col">
         <header className="flex items-center justify-between py-6 border-b border-neutral-200 dark:border-neutral-800/50 mb-8">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
@@ -421,12 +421,12 @@ export default function App() {
                 key="room"
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="flex-1 flex flex-col h-full"
+                className="flex-1 flex flex-col h-full overflow-hidden"
               >
-                <div className="bg-white dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
-                  <div>
+                <div className="bg-white dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-4 sm:p-6 mb-4 sm:mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm shrink-0">
+                  <div className="text-center sm:text-left">
                     <p className="text-sm text-neutral-500 dark:text-neutral-400 font-medium mb-1">Your Room Code</p>
-                    <span className="text-4xl font-mono tracking-widest font-bold text-neutral-900 dark:text-white">
+                    <span className="text-3xl sm:text-4xl font-mono tracking-widest font-bold text-neutral-900 dark:text-white">
                       {roomCode}
                     </span>
                   </div>
@@ -455,7 +455,7 @@ export default function App() {
                   )}
                 </AnimatePresence>
 
-                <div className="flex-1 bg-white dark:bg-neutral-900/30 border border-neutral-200 dark:border-neutral-800/50 rounded-2xl p-4 mb-6 overflow-y-auto flex flex-col gap-4 shadow-sm relative">
+                <div className="flex-1 bg-white dark:bg-neutral-900/30 border border-neutral-200 dark:border-neutral-800/50 rounded-2xl p-3 sm:p-4 mb-4 sm:mb-6 overflow-y-auto flex flex-col gap-4 shadow-sm relative min-h-0">
                   <div className="flex-1 flex flex-col gap-4">
                     {messages.length === 0 ? (
                       <div className="flex-1 flex flex-col items-center justify-center text-neutral-400 dark:text-neutral-500 space-y-3">
@@ -608,7 +608,7 @@ export default function App() {
                           }
                         }}
                         placeholder="Type or paste something..."
-                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-4 pl-12 pr-12 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all min-h-[60px] max-h-[200px] text-neutral-900 dark:text-white shadow-sm"
+                        className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl py-4 pl-20 pr-14 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all min-h-[60px] max-h-[200px] text-neutral-900 dark:text-white shadow-sm"
                         rows={1}
                       />
                       <button
