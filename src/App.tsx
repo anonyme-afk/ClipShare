@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Send, LogOut, Plus, LogIn, Check, Sun, Moon } from 'lucide-react';
+import { Copy, Send, LogOut, Plus, LogIn, Check, Sun, Moon, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { db } from './firebase';
@@ -12,7 +12,10 @@ type Message = {
   id: string;
   text?: string;
   imageUrl?: string;
-  type: 'text' | 'image';
+  fileName?: string;
+  fileSize?: number;
+  fileUrl?: string;
+  type: 'text' | 'image' | 'file';
   sender: 'me' | 'other';
   timestamp: number;
 };
@@ -34,9 +37,12 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedGenericFile, setSelectedGenericFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const genericFileInputRef = useRef<HTMLInputElement>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const myMessageKeys = useRef<Set<string>>(new Set());
@@ -159,16 +165,19 @@ export default function App() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputText.trim().length === 0 && !selectedFile) return;
+    if (inputText.trim().length === 0 && !selectedFile && !selectedGenericFile) return;
 
     let finalImageUrl = '';
+    let finalFileUrl = '';
+    let isImage = false;
+    let isGenericFile = false;
+    let fileName = '';
+    let fileSize = 0;
     
     if (selectedFile) {
       setUploading(true);
-      setUploadProgress(20); // Début du processus local
-      
+      setUploadProgress(20);
       try {
-        // Fonction de compression locale via Canvas
         const compressedBase64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.readAsDataURL(selectedFile);
@@ -177,8 +186,8 @@ export default function App() {
             img.src = event.target?.result as string;
             img.onload = () => {
               const canvas = document.createElement('canvas');
-              const MAX_WIDTH = 800;
-              const MAX_HEIGHT = 800;
+              const MAX_WIDTH = 1920;
+              const MAX_HEIGHT = 1920;
               let width = img.width;
               let height = img.height;
 
@@ -198,17 +207,15 @@ export default function App() {
               canvas.height = height;
               const ctx = canvas.getContext('2d');
               ctx?.drawImage(img, 0, 0, width, height);
-              
-              // Compression à 0.7 de qualité (très léger)
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
               resolve(dataUrl);
             };
             img.onerror = reject;
           };
           reader.onerror = reject;
         });
-
         finalImageUrl = compressedBase64;
+        isImage = true;
         setUploadProgress(100);
       } catch (err) {
         console.error("Erreur de traitement d'image:", err);
@@ -216,10 +223,37 @@ export default function App() {
         setUploading(false);
         return;
       }
-      
       setUploading(false);
       setSelectedFile(null);
       setImagePreview(null);
+      setUploadProgress(0);
+    } else if (selectedGenericFile) {
+      if (selectedGenericFile.size > 7 * 1024 * 1024) {
+        setErrorMessage("Le fichier est trop volumineux (max 7 Mo).");
+        return;
+      }
+      setUploading(true);
+      setUploadProgress(50);
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(selectedGenericFile);
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+        });
+        finalFileUrl = base64;
+        fileName = selectedGenericFile.name;
+        fileSize = selectedGenericFile.size;
+        isGenericFile = true;
+        setUploadProgress(100);
+      } catch (err) {
+        console.error("Erreur de fichier:", err);
+        setErrorMessage("Erreur lors de la préparation du fichier.");
+        setUploading(false);
+        return;
+      }
+      setUploading(false);
+      setSelectedGenericFile(null);
       setUploadProgress(0);
     }
 
@@ -228,13 +262,26 @@ export default function App() {
     if (newMsgRef.key) {
       myMessageKeys.current.add(newMsgRef.key);
     }
-    set(newMsgRef, {
+    
+    const msgData: any = {
       content: inputText.trim(),
-      imageUrl: finalImageUrl || null,
-      type: finalImageUrl ? 'image' : 'text',
       senderId: SESSION_ID,
       timestamp: serverTimestamp()
-    }).catch(err => {
+    };
+    
+    if (isImage) {
+      msgData.type = 'image';
+      msgData.imageUrl = finalImageUrl;
+    } else if (isGenericFile) {
+      msgData.type = 'file';
+      msgData.fileUrl = finalFileUrl;
+      msgData.fileName = fileName;
+      msgData.fileSize = fileSize;
+    } else {
+      msgData.type = 'text';
+    }
+
+    set(newMsgRef, msgData).catch(err => {
       console.error("Erreur d'envoi:", err);
       setErrorMessage("Erreur d'envoi à la base de données.");
     });
@@ -245,11 +292,25 @@ export default function App() {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
+      setSelectedGenericFile(null); // Clear generic file if image selected
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result as string);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleGenericFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 7 * 1024 * 1024) {
+        setErrorMessage("Le fichier est trop volumineux (max 7 Mo).");
+        return;
+      }
+      setSelectedGenericFile(file);
+      setSelectedFile(null); // Clear image if generic file selected
+      setImagePreview(null);
     }
   };
 
@@ -261,6 +322,15 @@ export default function App() {
 
   const copyMessage = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const downloadImage = (base64: string) => {
+    const link = document.createElement('a');
+    link.href = base64;
+    link.download = `clipshare_${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const toggleTheme = () => {
@@ -413,8 +483,32 @@ export default function App() {
                                 src={msg.imageUrl} 
                                 alt="Uploaded content" 
                                 className="max-w-full h-auto object-cover hover:scale-105 transition-transform duration-300 cursor-pointer"
-                                onClick={() => window.open(msg.imageUrl, '_blank')}
+                                onClick={() => setFullscreenImage(msg.imageUrl || null)}
                               />
+                            </div>
+                          )}
+                          {msg.type === 'file' && msg.fileUrl && (
+                            <div className="mb-2 p-3 bg-white/10 rounded-xl flex items-center justify-between border border-neutral-200/20 dark:border-white/10 shadow-sm">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className="p-2 bg-indigo-500/20 rounded-lg">
+                                        <Paperclip className="w-5 h-5 text-indigo-100" />
+                                    </div>
+                                    <div className="truncate">
+                                        <p className="text-sm font-medium truncate">{msg.fileName}</p>
+                                        <p className="text-xs opacity-70">{(msg.fileSize! / 1024 / 1024).toFixed(2)} MB</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const link = document.createElement('a');
+                                        link.href = msg.fileUrl!;
+                                        link.download = msg.fileName || 'download';
+                                        link.click();
+                                    }}
+                                    className="p-2 ml-2 bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20 rounded-lg transition-colors flex-shrink-0"
+                                >
+                                    <Download className="w-4 h-4" />
+                                </button>
                             </div>
                           )}
                           {msg.text && (
@@ -463,28 +557,35 @@ export default function App() {
 
                 <form onSubmit={handleSendMessage} className="relative space-y-2">
                   <AnimatePresence>
-                    {imagePreview && (
+                    {(imagePreview || selectedGenericFile) && (
                       <motion.div 
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
                         className="absolute bottom-full mb-4 left-0 right-0 p-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-xl flex items-center gap-4"
                       >
-                        <div className="w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800">
-                          <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                        </div>
-                        <div className="flex-1">
+                        {imagePreview ? (
+                          <div className="w-20 h-20 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800">
+                            <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                          </div>
+                        ) : (
+                          <div className="w-16 h-16 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center">
+                            <Paperclip className="w-8 h-8 text-neutral-400" />
+                          </div>
+                        )}
+                        <div className="flex-1 overflow-hidden">
                           <p className="text-sm font-medium text-neutral-900 dark:text-white truncate">
-                            {selectedFile?.name}
+                            {selectedFile?.name || selectedGenericFile?.name}
                           </p>
                           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Ready to send
+                            {selectedGenericFile ? `${(selectedGenericFile.size / 1024 / 1024).toFixed(2)} MB - Ready to send` : 'Ready to send'}
                           </p>
                         </div>
                         <button 
                           type="button"
                           onClick={() => {
                             setSelectedFile(null);
+                            setSelectedGenericFile(null);
                             setImagePreview(null);
                           }}
                           className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
@@ -524,10 +625,23 @@ export default function App() {
                         className="hidden" 
                         accept="image/*"
                       />
+                      <button
+                        type="button"
+                        onClick={() => genericFileInputRef.current?.click()}
+                        className="absolute left-12 bottom-3 p-2 text-neutral-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                      >
+                        <Paperclip className="w-5 h-5" />
+                      </button>
+                      <input 
+                        type="file" 
+                        ref={genericFileInputRef} 
+                        onChange={handleGenericFileSelect} 
+                        className="hidden" 
+                      />
                     </div>
                     <button
                       type="submit"
-                      disabled={(inputText.trim().length === 0 && !selectedFile) || uploading}
+                      disabled={(inputText.trim().length === 0 && !selectedFile && !selectedGenericFile) || uploading}
                       className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 h-[60px] w-[60px] flex items-center justify-center"
                     >
                       {uploading ? (
@@ -545,6 +659,53 @@ export default function App() {
             )}
           </AnimatePresence>
         </main>
+
+        <AnimatePresence>
+          {fullscreenImage && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+              onClick={() => setFullscreenImage(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="relative max-w-full max-h-full flex flex-col items-center gap-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <img 
+                  src={fullscreenImage} 
+                  alt="Fullscreen" 
+                  className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+                />
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => downloadImage(fullscreenImage)}
+                    className="bg-white text-black px-6 py-3 rounded-2xl font-semibold flex items-center gap-2 hover:bg-neutral-200 transition-colors shadow-lg"
+                  >
+                    <Plus className="w-5 h-5 rotate-45" /> {/* Use Plus rotated for "Download" feel or simple icon */}
+                    Download Image
+                  </button>
+                  <button
+                    onClick={() => setFullscreenImage(null)}
+                    className="bg-neutral-800 text-white px-6 py-3 rounded-2xl font-semibold hover:bg-neutral-700 transition-colors shadow-lg"
+                  >
+                    Close
+                  </button>
+                </div>
+                <button 
+                  onClick={() => setFullscreenImage(null)}
+                  className="absolute -top-12 right-0 p-2 text-white/50 hover:text-white transition-colors"
+                >
+                  <X className="w-8 h-8" />
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
